@@ -352,7 +352,8 @@ def health():
 
 if __name__ == "__main__":
     print("Starting Controller...")
-    print(f"Telegram Bot: {'Configured' if telegram.bot_token else 'Not configured'}")
-    print(f"Chat ID: {telegram.chat_id or 'Not configured'}")
+    bot = get_bot()
+    print(f"Telegram Bot: {'Configured' if bot.is_configured else 'Not configured'}")
+    print(f"Chat ID: {bot.chat_id or 'Not configured'}")
     
     app.run(host="0.0.0.0", port=5000, debug=False)
