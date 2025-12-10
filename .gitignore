@@ -1,0 +1,9 @@
+.env
+loot/
+data/*.json
+certs/*.pem
+certs/*.key
+certs/*.crt
+__pycache__/
+*.pyc
+.DS_Store
