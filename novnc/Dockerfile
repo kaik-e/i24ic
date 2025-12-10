@@ -43,8 +43,14 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
 
 WORKDIR /app
 
-# Copy supervisor config
+# Install Python for cookie monitor
+RUN apt-get update && apt-get install -y python3 python3-pip \
+    && pip3 install requests \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy files
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY cookie_monitor.py /app/cookie_monitor.py
 
 # Create directories
 RUN mkdir -p /app/loot /root/.config/google-chrome /var/log/supervisor
