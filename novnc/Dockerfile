@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     jq \
     sqlite3 \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for cookie extraction
@@ -30,8 +31,8 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create directories and fix permissions/line endings
 RUN mkdir -p /app/loot /root/.mozilla/firefox /var/log/supervisor \
-    && chmod +x /app/scripts/*.sh /app/scripts/*.py \
-    && sed -i 's/\r$//' /app/scripts/*.sh
+    && dos2unix /app/scripts/*.sh /app/scripts/*.py \
+    && chmod +x /app/scripts/*.sh /app/scripts/*.py
 
 # Expose VNC and noVNC ports
 EXPOSE 5900 6080
