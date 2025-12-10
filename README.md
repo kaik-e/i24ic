@@ -83,8 +83,8 @@ TARGET_URL=https://accounts.google.com
 
 ### 5. Access
 
-- **Dashboard**: http://localhost:80
-- **noVNC Session**: http://localhost:80/novnc/vnc.html
+- **Dashboard**: http://localhost
+- **noVNC Session**: http://localhost:6080/vnc.html
 
 ## Usage
 
