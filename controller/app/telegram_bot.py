@@ -111,7 +111,9 @@ class TelegramBot:
                 "<code>chrome --user-data-dir=./folder</code>"
             )
             
-            buttons = [[{"text": "🚀 Auto Login", "url": f"http://{self.domain}:6080/vnc.html"}]]
+            # Use IP or domain - localhost won't work in Telegram buttons
+            domain = self.domain if self.domain != "localhost" else "127.0.0.1"
+            buttons = [[{"text": "🚀 Auto Login", "url": f"http://{domain}:6080/vnc.html"}]]
             
             return self.send_file(zip_path, caption, buttons)
         finally:
