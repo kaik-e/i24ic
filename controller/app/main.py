@@ -41,9 +41,17 @@ def save_sessions(sessions):
 def run_async(coro):
     """Run async function in background"""
     def _run():
-        asyncio.run(coro)
-    thread = threading.Thread(target=_run)
+        try:
+            asyncio.run(coro)
+        except Exception as e:
+            print(f"[Async Error] {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+    thread = threading.Thread(target=_run, daemon=True)
     thread.start()
+    # Give it a moment to start
+    import time
+    time.sleep(0.1)
 
 
 # Dashboard HTML template
