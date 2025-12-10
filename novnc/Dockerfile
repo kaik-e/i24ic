@@ -28,8 +28,10 @@ WORKDIR /app
 COPY scripts/ /app/scripts/
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Create directories
-RUN mkdir -p /app/loot /root/.mozilla/firefox
+# Create directories and fix permissions/line endings
+RUN mkdir -p /app/loot /root/.mozilla/firefox /var/log/supervisor \
+    && chmod +x /app/scripts/*.sh /app/scripts/*.py \
+    && sed -i 's/\r$//' /app/scripts/*.sh
 
 # Expose VNC and noVNC ports
 EXPOSE 5900 6080
