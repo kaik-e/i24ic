@@ -5,7 +5,7 @@ ENV DISPLAY=:1
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
-    firefox \
+    chromium-browser \
     xvfb \
     x11vnc \
     novnc \
@@ -16,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     jq \
     sqlite3 \
-    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies for cookie extraction
@@ -25,14 +24,11 @@ RUN pip3 install lz4 requests
 # Create app directory
 WORKDIR /app
 
-# Copy scripts
-COPY scripts/ /app/scripts/
+# Copy supervisor config
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Create directories and fix permissions/line endings
-RUN mkdir -p /app/loot /root/.mozilla/firefox /var/log/supervisor \
-    && dos2unix /app/scripts/*.sh /app/scripts/*.py \
-    && chmod +x /app/scripts/*.sh /app/scripts/*.py
+# Create directories
+RUN mkdir -p /app/loot /root/.config/chromium /var/log/supervisor
 
 # Expose VNC and noVNC ports
 EXPOSE 5900 6080
