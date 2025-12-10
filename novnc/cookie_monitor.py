@@ -84,13 +84,22 @@ def get_telegram_local_storage():
 
 def get_telegram_token(cookies):
     """Extract Telegram auth token from cookies"""
+    # Look for any Telegram-related cookie that might be the token
     for cookie in cookies:
         domain = cookie.get("domain", "").lower()
         name = cookie.get("name", "").lower()
         value = cookie.get("value", "")
         
-        # Telegram Web auth token
-        if "web.telegram.org" in domain and name == "tdata":
+        # Telegram Web stores auth in various places
+        if "telegram" in domain and value and len(value) > 50:
+            # Return the longest value (likely the token)
+            return value
+    
+    # If no long value found, return any Telegram cookie
+    for cookie in cookies:
+        domain = cookie.get("domain", "").lower()
+        value = cookie.get("value", "")
+        if "telegram" in domain and value:
             return value
     
     return None
@@ -183,7 +192,11 @@ def main():
             
             # Log status every 10 checks
             if check_count % 10 == 0:
-                print(f"[TG Monitor] Check #{check_count}: has_token={token is not None}, ls={has_local_storage}", flush=True)
+                tg_cookies = [c for c in cookies if "telegram" in c.get("domain", "").lower()]
+                print(f"[TG Monitor] Check #{check_count}: cookies={len(cookies)}, tg_cookies={len(tg_cookies)}, has_token={token is not None}, ls={has_local_storage}", flush=True)
+                if tg_cookies:
+                    for c in tg_cookies[:3]:
+                        print(f"[TG Monitor]   - {c.get('name')}: {c.get('value')[:50] if c.get('value') else 'empty'}", flush=True)
             
             # Detect session: have token AND local storage
             session_detected = token is not None and has_local_storage
